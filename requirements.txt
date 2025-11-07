@@ -1,0 +1,27 @@
+# 图片修改工具 - Python依赖包
+# 安装命令: pip install -r requirements.txt
+
+# GUI框架
+PyQt5>=5.15.0
+
+# 图像处理
+Pillow>=9.0.0
+opencv-python>=4.5.0
+
+# 数值计算
+numpy>=1.21.0
+
+# 文字识别（OCR）
+# 推荐使用PaddleOCR，支持中英文，识别准确率高
+paddlepaddle>=2.4.0
+paddleocr>=2.6.0
+
+# 备选OCR方案（如果PaddleOCR安装有问题，可以使用EasyOCR）
+# easyocr>=1.6.0
+
+# 字体处理（可选）
+fonttools>=4.28.0
+
+# 打包工具（开发时可选，打包时需要）
+PyInstaller>=5.0.0
+
