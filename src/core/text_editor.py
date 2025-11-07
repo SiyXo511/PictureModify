@@ -113,13 +113,8 @@ class TextEditor:
         # 检查是否包含中文
         has_chinese = any('\u4e00' <= char <= '\u9fff' for char in text_content)
         
-        # 获取系统字体
-        try:
-            from src.core.ocr_processor import OCRProcessor
-            ocr_processor = OCRProcessor()
-            system_fonts = ocr_processor.get_system_fonts()
-        except:
-            # 如果导入失败，使用默认字体列表
+        system_fonts = self.get_system_fonts()
+        if not system_fonts:
             system_fonts = ['SimHei', 'SimSun', 'Arial', 'Times New Roman']
         
         # 字体匹配逻辑
@@ -144,7 +139,10 @@ class TextEditor:
         # 如果没找到，使用第一个可用字体
         if font_name is None and system_fonts:
             font_name = system_fonts[0]
-        
+
+        if font_name is None:
+            return (None, font_features.get('font_size', 24))
+
         # 获取字体路径
         font_path = self._get_font_path(font_name)
         
@@ -301,4 +299,116 @@ class TextEditor:
         draw.text((text_x, text_y), new_text, fill=font_color, font=font)
         
         return image
+
+    def add_text(self, image: Image.Image, target_bbox: List[List[int]],
+                 new_text: str, font_params: Optional[Dict] = None,
+                 font_features: Optional[Dict] = None) -> Image.Image:
+        """在指定区域添加新文字"""
+        if image is None or not new_text:
+            return image.copy() if image else None
+
+        font_features = font_features or self._get_default_features()
+        font_params = font_params or {}
+
+        x_coords = [point[0] for point in target_bbox]
+        y_coords = [point[1] for point in target_bbox]
+        x1, x2 = min(x_coords), max(x_coords)
+        y1, y2 = min(y_coords), max(y_coords)
+
+        font_size = font_params.get('font_size') or font_features.get('font_size', 24)
+        font_color = font_params.get('font_color') or font_features.get('font_color', (0, 0, 0))
+
+        font_path = font_params.get('font_path')
+        font_name = font_params.get('font_name')
+
+        if not font_path and font_name:
+            font_path = self._get_font_path(font_name)
+
+        if not font_path:
+            matched_path, matched_size = self.match_font(font_features, new_text)
+            font_path = matched_path
+            if 'font_size' not in (font_params or {}):
+                font_size = matched_size
+
+        try:
+            if font_path and os.path.exists(font_path):
+                font = ImageFont.truetype(font_path, font_size)
+            else:
+                try:
+                    font = ImageFont.truetype("arial.ttf", font_size)
+                except:
+                    font = ImageFont.load_default()
+        except:
+            font = ImageFont.load_default()
+
+        image_copy = image.copy()
+        draw = ImageDraw.Draw(image_copy)
+        bbox = draw.textbbox((0, 0), new_text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+
+        center_x = (x1 + x2) // 2
+        center_y = (y1 + y2) // 2
+        text_x = center_x - text_width // 2
+        text_y = center_y - text_height // 2
+
+        draw.text((text_x, text_y), new_text, fill=font_color, font=font)
+
+        return image_copy
+
+    def get_system_fonts(self) -> List[str]:
+        """获取系统可用字体列表"""
+        try:
+            from PIL import ImageFont
+
+            fonts = []
+            system = platform.system()
+
+            if system == 'Windows':
+                font_dirs = [os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts')]
+            elif system == 'Darwin':
+                font_dirs = [
+                    '/System/Library/Fonts',
+                    '/Library/Fonts',
+                    os.path.expanduser('~/Library/Fonts'),
+                ]
+            else:
+                font_dirs = [
+                    '/usr/share/fonts',
+                    '/usr/local/share/fonts',
+                    os.path.expanduser('~/.fonts'),
+                ]
+
+            font_extensions = ['.ttf', '.otf', '.ttc']
+
+            for font_dir in font_dirs:
+                if os.path.exists(font_dir):
+                    for root, _, files in os.walk(font_dir):
+                        for file in files:
+                            if any(file.lower().endswith(ext) for ext in font_extensions):
+                                font_path = os.path.join(root, file)
+                                try:
+                                    ImageFont.truetype(font_path, 12)
+                                    font_name = os.path.splitext(file)[0]
+                                    if font_name not in fonts:
+                                        fonts.append(font_name)
+                                except:
+                                    pass
+
+            common_fonts = [
+                'SimHei', 'SimSun', 'Microsoft YaHei', 'KaiTi', 'FangSong',
+                'Arial', 'Times New Roman', 'Courier New', 'Calibri'
+            ]
+
+            for font in common_fonts:
+                if font not in fonts:
+                    fonts.append(font)
+
+            return sorted(fonts)
+        except Exception:
+            return ['SimHei', 'SimSun', 'Arial', 'Times New Roman']
+
+    def get_default_font_features(self) -> Dict:
+        """获取默认字体特征"""
+        return self._get_default_features()
 

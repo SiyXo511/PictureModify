@@ -6,213 +6,131 @@ import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QMenuBar, QToolBar, QStatusBar, QAction, QFileDialog,
                              QMessageBox, QDialog, QLabel, QPushButton, QComboBox,
-                             QSpinBox, QColorDialog, QCheckBox, QLineEdit, QTableWidget,
-                             QTableWidgetItem, QHeaderView, QDialogButtonBox, QProgressDialog)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QIcon, QKeySequence, QColor
+                             QSpinBox, QColorDialog, QLineEdit, QDialogButtonBox)
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QKeySequence, QColor
 
 from src.gui.image_canvas import ImageCanvas
 from src.utils.file_handler import FileHandler
 from src.utils.history_manager import HistoryManager
 from src.core.selection_manager import SelectionManager
 from src.core.image_processor import ImageProcessor
-from src.core.ocr_processor import OCRProcessor
 from src.core.text_editor import TextEditor
-from PIL import Image
 
 
-class OCRThread(QThread):
-    """OCR识别线程"""
-    finished = pyqtSignal(list)
-    error = pyqtSignal(str)
-    
-    def __init__(self, image_region):
-        super().__init__()
-        self.image_region = image_region
-    
-    def run(self):
-        try:
-            ocr_processor = OCRProcessor()
-            if not ocr_processor.is_available():
-                self.error.emit("OCR未初始化，请检查PaddleOCR是否安装")
-                return
-            
-            results = ocr_processor.recognize_text(self.image_region)
-            self.finished.emit(results)
-        except Exception as e:
-            self.error.emit(f"OCR识别失败: {str(e)}")
+class TextInputDialog(QDialog):
+    """文字输入与样式调整对话框"""
 
-
-class TextRecognitionDialog(QDialog):
-    """文字识别结果对话框"""
-    def __init__(self, recognition_results, parent=None):
+    def __init__(self, font_features, system_fonts, parent=None, title="添加文字",
+                 default_text="", preset_features=None, initial_params=None):
         super().__init__(parent)
-        self.recognition_results = recognition_results
-        self.selected_indices = []
-        self.init_ui()
-    
-    def init_ui(self):
-        self.setWindowTitle("文字识别结果")
-        self.setMinimumSize(600, 400)
-        
-        layout = QVBoxLayout()
-        
-        # 表格显示识别结果
-        self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["选择", "文字内容", "位置", "置信度"])
-        self.table.horizontalHeader().setStretchLastSection(True)
-        
-        for i, result in enumerate(self.recognition_results):
-            self.table.insertRow(i)
-            
-            # 复选框
-            checkbox = QCheckBox()
-            checkbox.setChecked(True)
-            self.table.setCellWidget(i, 0, checkbox)
-            
-            # 文字内容
-            self.table.setItem(i, 1, QTableWidgetItem(result['text']))
-            
-            # 位置
-            bbox = result['bbox']
-            pos_str = f"({bbox[0][0]},{bbox[0][1]}) - ({bbox[2][0]},{bbox[2][1]})"
-            self.table.setItem(i, 2, QTableWidgetItem(pos_str))
-            
-            # 置信度
-            confidence = result['confidence']
-            self.table.setItem(i, 3, QTableWidgetItem(f"{confidence:.2%}"))
-        
-        layout.addWidget(self.table)
-        
-        # 按钮
-        button_layout = QHBoxLayout()
-        self.delete_btn = QPushButton("删除选中文字")
-        self.replace_btn = QPushButton("替换选中文字")
-        self.cancel_btn = QPushButton("取消")
-        
-        button_layout.addWidget(self.delete_btn)
-        button_layout.addWidget(self.replace_btn)
-        button_layout.addStretch()
-        button_layout.addWidget(self.cancel_btn)
-        
-        layout.addLayout(button_layout)
-        self.setLayout(layout)
-        
-        # 连接信号
-        self.delete_btn.clicked.connect(self.accept_delete)
-        self.replace_btn.clicked.connect(self.accept_replace)
-        self.cancel_btn.clicked.connect(self.reject)
-    
-    def get_selected_results(self):
-        """获取选中的识别结果"""
-        selected = []
-        for i in range(self.table.rowCount()):
-            checkbox = self.table.cellWidget(i, 0)
-            if checkbox.isChecked():
-                selected.append(self.recognition_results[i])
-        return selected
-    
-    def accept_delete(self):
-        self.done(1)  # 返回1表示删除
-    
-    def accept_replace(self):
-        self.done(2)  # 返回2表示替换
+        self.font_features = font_features or {}
+        self.system_fonts = system_fonts or []
+        self.preset_features = preset_features or None
+        self.initial_params = initial_params or {}
+        initial_color = (self.initial_params.get('font_color') or
+                         self.font_features.get('font_color') or (0, 0, 0))
+        self.current_color = QColor(*initial_color)
+        self.default_text = default_text
+        self.setWindowTitle(title)
+        self.setMinimumSize(400, 280)
+        self._init_ui()
 
-
-class TextReplaceDialog(QDialog):
-    """文字替换对话框"""
-    def __init__(self, old_text, font_features, system_fonts, parent=None):
-        super().__init__(parent)
-        self.old_text = old_text
-        self.font_features = font_features
-        self.system_fonts = system_fonts
-        self.font_params = {}
-        self.init_ui()
-    
-    def init_ui(self):
-        self.setWindowTitle("替换文字")
-        self.setMinimumSize(400, 300)
-        
+    def _init_ui(self):
         layout = QVBoxLayout()
-        
-        # 原文字
-        layout.addWidget(QLabel("原文字:"))
-        old_text_label = QLabel(self.old_text)
-        old_text_label.setStyleSheet("background-color: #f0f0f0; padding: 5px;")
-        layout.addWidget(old_text_label)
-        
-        # 新文字
+
         layout.addWidget(QLabel("新文字:"))
         self.new_text_input = QLineEdit()
+        self.new_text_input.setText(self.default_text)
         layout.addWidget(self.new_text_input)
-        
-        # 字体选择
+
         layout.addWidget(QLabel("字体:"))
         self.font_combo = QComboBox()
         self.font_combo.addItems(self.system_fonts)
-        # 尝试选择匹配的字体
-        if self.font_features.get('is_bold'):
-            for i, font in enumerate(self.system_fonts):
-                if 'Hei' in font or 'Bold' in font:
-                    self.font_combo.setCurrentIndex(i)
-                    break
         layout.addWidget(self.font_combo)
-        
-        # 字体大小
+
         layout.addWidget(QLabel("字体大小:"))
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(8, 200)
-        self.font_size_spin.setValue(self.font_features.get('font_size', 24))
         layout.addWidget(self.font_size_spin)
-        
-        # 字体颜色
+
         layout.addWidget(QLabel("字体颜色:"))
         color_layout = QHBoxLayout()
         self.color_btn = QPushButton()
-        font_color = self.font_features.get('font_color', (0, 0, 0))
-        self.current_color = QColor(*font_color)
-        self.update_color_button()
-        self.color_btn.clicked.connect(self.choose_color)
+        self._update_color_button()
+        self.color_btn.clicked.connect(self._choose_color)
         color_layout.addWidget(self.color_btn)
         color_layout.addStretch()
         layout.addLayout(color_layout)
-        
-        # 按钮
+
+        if self.preset_features:
+            preset_layout = QHBoxLayout()
+            preset_btn = QPushButton("应用采样样式")
+            preset_btn.clicked.connect(self._apply_preset_features)
+            preset_layout.addWidget(preset_btn)
+            preset_layout.addStretch()
+            layout.addLayout(preset_layout)
+
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
-        
+
         self.setLayout(layout)
-    
-    def update_color_button(self):
-        """更新颜色按钮"""
+
+        self._apply_features(self.font_features)
+        if self.initial_params:
+            self._apply_features(self.initial_params)
+
+    def _update_color_button(self):
         self.color_btn.setStyleSheet(
-            f"background-color: rgb({self.current_color.red()}, "
-            f"{self.current_color.green()}, {self.current_color.blue()});"
+            f"background-color: rgb({self.current_color.red()}, {self.current_color.green()}, {self.current_color.blue()});"
             f"min-width: 100px; min-height: 30px;"
         )
-    
-    def choose_color(self):
-        """选择颜色"""
+
+    def _choose_color(self):
         color = QColorDialog.getColor(self.current_color, self)
         if color.isValid():
             self.current_color = color
-            self.update_color_button()
-    
-    def get_font_params(self):
-        """获取字体参数"""
-        return {
-            'font_name': self.font_combo.currentText(),
-            'font_size': self.font_size_spin.value(),
-            'font_color': (self.current_color.red(), self.current_color.green(), self.current_color.blue())
-        }
-    
-    def get_new_text(self):
-        """获取新文字"""
-        return self.new_text_input.text()
+            self._update_color_button()
 
+    def _apply_preset_features(self):
+        if self.preset_features:
+            self._apply_features(self.preset_features)
+
+    def _apply_features(self, features):
+        if not features:
+            return
+
+        font_size = features.get('font_size')
+        if font_size is not None:
+            self.font_size_spin.setValue(int(font_size))
+
+        font_color = features.get('font_color')
+        if font_color:
+            self.current_color = QColor(*font_color)
+            self._update_color_button()
+
+        preferred_font = (features.get('preferred_font') or
+                          features.get('font_name'))
+        if preferred_font and preferred_font in self.system_fonts:
+            index = self.font_combo.findText(preferred_font)
+            if index >= 0:
+                self.font_combo.setCurrentIndex(index)
+
+    def get_text(self):
+        return self.new_text_input.text().strip()
+
+    def get_font_params(self):
+        return {
+            'font_name': self.font_combo.currentText() if self.font_combo.count() > 0 else None,
+            'font_size': self.font_size_spin.value(),
+            'font_color': (
+                self.current_color.red(),
+                self.current_color.green(),
+                self.current_color.blue()
+            )
+        }
 
 class FillModeDialog(QDialog):
     """填充模式选择对话框"""
@@ -308,11 +226,9 @@ class MainWindow(QMainWindow):
         self.history_manager = HistoryManager(max_history=20)
         self.selection_manager = SelectionManager()
         self.image_processor = ImageProcessor()
-        self.ocr_processor = OCRProcessor()
         self.text_editor = TextEditor()
-        
-        # OCR识别结果
-        self.ocr_results = []
+        self.sampled_font_features = None
+        self.last_text_edit = None
         
         self.init_ui()
         self.update_ui_state()
@@ -526,24 +442,31 @@ class MainWindow(QMainWindow):
         
         tools_menu.addSeparator()
         
-        ocr_action = QAction("🔍 文字识别(&O)", self)
-        ocr_action.setStatusTip("识别图片中的文字")
-        ocr_action.triggered.connect(self.recognize_text)
-        tools_menu.addAction(ocr_action)
-        
+        sample_text_action = QAction("🎯 采样文字样式(&S)", self)
+        sample_text_action.setStatusTip("提取选区文字的字体样式供复用")
+        sample_text_action.triggered.connect(self.sample_text_style)
+        self.sample_text_action = sample_text_action
+        tools_menu.addAction(sample_text_action)
+
         tools_menu.addSeparator()
-        
-        delete_text_action = QAction("🗑️ 删除选中文字(&D)", self)
-        delete_text_action.setStatusTip("删除已识别的选中文字")
-        delete_text_action.triggered.connect(self.delete_selected_text_from_menu)
+
+        delete_text_action = QAction("🗑️ 删除选区文字(&D)", self)
+        delete_text_action.setStatusTip("使用智能填充删除选区内的文字")
+        delete_text_action.triggered.connect(self.delete_text_in_selection)
         self.delete_text_action = delete_text_action
         tools_menu.addAction(delete_text_action)
         
-        replace_text_action = QAction("✏️ 替换选中文字(&R)", self)
-        replace_text_action.setStatusTip("替换已识别的选中文字")
-        replace_text_action.triggered.connect(self.replace_selected_text_from_menu)
-        self.replace_text_action = replace_text_action
-        tools_menu.addAction(replace_text_action)
+        add_text_action = QAction("✏️ 添加文字(&A)", self)
+        add_text_action.setStatusTip("在选区内添加新的文字")
+        add_text_action.triggered.connect(self.add_text_in_selection)
+        self.add_text_action = add_text_action
+        tools_menu.addAction(add_text_action)
+
+        edit_text_action = QAction("🛠️ 编辑文字(&E)", self)
+        edit_text_action.setStatusTip("调整最近添加的文字样式或位置")
+        edit_text_action.triggered.connect(self.edit_text_in_selection)
+        self.edit_text_action = edit_text_action
+        tools_menu.addAction(edit_text_action)
         
         # 视图菜单
         view_menu = menubar.addMenu("👁️ 视图(&V)")
@@ -597,13 +520,28 @@ class MainWindow(QMainWindow):
         toolbar.addAction(smart_fill_btn)
         
         toolbar.addSeparator()
+
+        # 删除/添加文字
+        self.sample_text_btn = QAction("🎯 采样样式", self)
+        self.sample_text_btn.setStatusTip("采样选区中文字的样式")
+        self.sample_text_btn.triggered.connect(self.sample_text_style)
+        toolbar.addAction(self.sample_text_btn)
+
+        self.delete_text_btn = QAction("🗑️ 删除文字", self)
+        self.delete_text_btn.setStatusTip("删除选区中的文字")
+        self.delete_text_btn.triggered.connect(self.delete_text_in_selection)
+        toolbar.addAction(self.delete_text_btn)
         
-        # 文字识别
-        ocr_btn = QAction("🔍 文字识别", self)
-        ocr_btn.setStatusTip("识别图片中的文字")
-        ocr_btn.triggered.connect(self.recognize_text)
-        toolbar.addAction(ocr_btn)
-        
+        self.add_text_btn = QAction("✏️ 添加文字", self)
+        self.add_text_btn.setStatusTip("在选区内添加新的文字")
+        self.add_text_btn.triggered.connect(self.add_text_in_selection)
+        toolbar.addAction(self.add_text_btn)
+
+        self.edit_text_btn = QAction("🛠️ 编辑文字", self)
+        self.edit_text_btn.setStatusTip("调整最近添加文字的样式或位置")
+        self.edit_text_btn.triggered.connect(self.edit_text_in_selection)
+        toolbar.addAction(self.edit_text_btn)
+
         toolbar.addSeparator()
         
         # 撤销
@@ -635,29 +573,41 @@ class MainWindow(QMainWindow):
         """更新UI状态"""
         has_image = self.current_image is not None
         has_selection = self.canvas.get_selection() is not None
-        has_ocr_results = len(self.ocr_results) > 0
-        
         # 更新撤销/重做按钮
         self.undo_action.setEnabled(self.history_manager.can_undo())
         self.redo_action.setEnabled(self.history_manager.can_redo())
         self.undo_btn.setEnabled(self.history_manager.can_undo())
         self.redo_btn.setEnabled(self.history_manager.can_redo())
         
-        # 更新文字删除/替换按钮（需要OCR结果）
+        can_sample = has_image and has_selection
+        can_modify = has_image and has_selection
+        can_edit_text = has_image and self.last_text_edit is not None
+
+        if hasattr(self, 'sample_text_action'):
+            self.sample_text_action.setEnabled(can_sample)
         if hasattr(self, 'delete_text_action'):
-            self.delete_text_action.setEnabled(has_image and has_ocr_results)
-        if hasattr(self, 'replace_text_action'):
-            self.replace_text_action.setEnabled(has_image and has_ocr_results)
+            self.delete_text_action.setEnabled(can_modify)
+        if hasattr(self, 'add_text_action'):
+            self.add_text_action.setEnabled(can_modify)
+        if hasattr(self, 'edit_text_action'):
+            self.edit_text_action.setEnabled(can_edit_text)
+
+        if hasattr(self, 'sample_text_btn'):
+            self.sample_text_btn.setEnabled(can_sample)
+        if hasattr(self, 'delete_text_btn'):
+            self.delete_text_btn.setEnabled(can_modify)
+        if hasattr(self, 'add_text_btn'):
+            self.add_text_btn.setEnabled(can_modify)
+        if hasattr(self, 'edit_text_btn'):
+            self.edit_text_btn.setEnabled(can_edit_text)
         
         # 更新状态栏
         if has_image:
             info = self.history_manager.get_current_state()
             if info:
-                ocr_info = f" | 已识别文字: {len(self.ocr_results)}个" if has_ocr_results else ""
                 self.status_bar.showMessage(
                     f"图片尺寸: {info.width}x{info.height} | "
                     f"选择区域: {self.canvas.get_selection() if has_selection else '无'}"
-                    f"{ocr_info}"
                 )
         else:
             self.status_bar.showMessage("就绪")
@@ -680,6 +630,8 @@ class MainWindow(QMainWindow):
                 self.canvas.set_image(image)
                 self.history_manager.reset(image)
                 self.canvas.clear_selection()
+                self.sampled_font_features = None
+                self.last_text_edit = None
                 self.update_ui_state()
                 self.status_bar.showMessage(f"已打开: {os.path.basename(file_path)}")
             else:
@@ -751,6 +703,8 @@ class MainWindow(QMainWindow):
                 self.canvas.set_image(self.current_image)
                 self.history_manager.reset(self.current_image)
                 self.canvas.clear_selection()
+                self.sampled_font_features = None
+                self.last_text_edit = None
                 self.update_ui_state()
     
     def on_selection_changed(self, selection_rect):
@@ -811,238 +765,259 @@ class MainWindow(QMainWindow):
                 self.update_ui_state()
                 self.status_bar.showMessage(f"智能填充完成 ({fill_mode})")
     
-    def recognize_text(self):
-        """文字识别"""
+    def sample_text_style(self):
+        """采样当前选区的文字样式"""
         if self.current_image is None:
             QMessageBox.warning(self, "警告", "请先打开图片")
             return
-        
-        if not self.ocr_processor.is_available():
-            QMessageBox.warning(
-                self,
-                "错误",
-                "OCR功能不可用。\n请确保已安装PaddleOCR:\npip install paddlepaddle paddleocr"
-            )
-            return
-        
+
         selection = self.canvas.get_selection()
         if not selection:
-            QMessageBox.warning(self, "警告", "请先选择包含文字的区域")
+            QMessageBox.warning(self, "警告", "请先选择要采样的文字区域")
             return
-        
-        # 提取选中区域
-        x1, y1, x2, y2 = selection
-        region = self.current_image.crop((x1, y1, x2, y2))
-        
-        # 显示进度对话框
-        progress = QProgressDialog("正在识别文字...", "取消", 0, 0, self)
-        progress.setWindowModality(Qt.WindowModal)
-        progress.show()
-        
-        # 在后台线程中执行OCR
-        self.ocr_thread = OCRThread(region)
-        self.ocr_thread.finished.connect(
-            lambda results: self.on_ocr_finished(results, progress)
-        )
-        self.ocr_thread.error.connect(
-            lambda error: self.on_ocr_error(error, progress)
-        )
-        self.ocr_thread.start()
-    
-    def on_ocr_finished(self, results, progress):
-        """OCR识别完成"""
-        progress.close()
-        
-        if not results:
-            QMessageBox.information(self, "提示", "未识别到文字")
+
+        bbox = self._selection_to_bbox(selection)
+        if bbox is None:
+            QMessageBox.warning(self, "警告", "选区无效，无法采样")
             return
-        
-        # 保存识别结果
-        self.ocr_results = results
-        
-        # 更新UI状态（启用文字删除/替换菜单）
-        self.update_ui_state()
-        
-        # 显示识别结果对话框
-        dialog = TextRecognitionDialog(results, self)
-        result = dialog.exec_()
-        
-        if result == 1:  # 删除
-            self.delete_selected_texts(dialog.get_selected_results())
-        elif result == 2:  # 替换
-            selected = dialog.get_selected_results()
-            if selected:
-                # 暂时只处理第一个选中的文字
-                self.replace_text(selected[0])
-    
-    def on_ocr_error(self, error, progress):
-        """OCR识别错误"""
-        progress.close()
-        QMessageBox.warning(self, "错误", error)
-    
-    def delete_selected_texts(self, selected_results):
-        """删除选中的文字"""
-        if not selected_results:
+
+        features = self.text_editor.extract_font_features(self.current_image, bbox)
+        font_path, _ = self.text_editor.match_font(features, "sample")
+        if font_path:
+            font_name = os.path.splitext(os.path.basename(font_path))[0]
+            features['preferred_font'] = font_name
+
+        self.sampled_font_features = features
+        self.status_bar.showMessage("已采样选区文字样式，可在添加文字时应用")
+
+    def delete_text_in_selection(self):
+        """删除选区内的文字"""
+        if self.current_image is None:
+            QMessageBox.warning(self, "警告", "请先打开图片")
             return
-        
-        # 保存当前状态
+
+        selection = self.canvas.get_selection()
+        if not selection:
+            QMessageBox.warning(self, "警告", "请先选择要删除文字的区域")
+            return
+
+        bbox = self._selection_to_bbox(selection)
+        if bbox is None:
+            QMessageBox.warning(self, "警告", "选区无效")
+            return
+
         self.history_manager.save_state(self.current_image)
-        
-        # 获取所有文字边界框
-        bboxes = [result['bbox'] for result in selected_results]
-        
-        # 删除文字
-        processed_image = self.text_editor.delete_text(self.current_image, bboxes)
+
+        processed_image = self.text_editor.delete_text(self.current_image, [bbox])
         if processed_image:
             self.current_image = processed_image
             self.canvas.set_image(processed_image)
             self.canvas.clear_selection()
-            # 从OCR结果中移除已删除的文字
-            deleted_bboxes = set(tuple(map(tuple, r['bbox'])) for r in selected_results)
-            self.ocr_results = [
-                r for r in self.ocr_results 
-                if tuple(map(tuple, r['bbox'])) not in deleted_bboxes
-            ]
+            self.last_text_edit = None
             self.update_ui_state()
-            self.status_bar.showMessage(f"已删除 {len(selected_results)} 个文字")
-    
-    def replace_text(self, ocr_result):
-        """替换文字"""
-        old_text = ocr_result['text']
-        bbox = ocr_result['bbox']
-        
-        # 提取字体特征
-        font_features = self.text_editor.extract_font_features(self.current_image, bbox)
-        
-        # 获取系统字体
-        system_fonts = self.ocr_processor.get_system_fonts()
-        
-        # 显示替换对话框
-        dialog = TextReplaceDialog(old_text, font_features, system_fonts, self)
-        if dialog.exec_() == QDialog.Accepted:
-            new_text = dialog.get_new_text()
-            if not new_text:
-                QMessageBox.warning(self, "警告", "新文字不能为空")
+            self.status_bar.showMessage("选区文字已删除")
+
+    def add_text_in_selection(self):
+        """在选区内添加文字"""
+        if self.current_image is None:
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+
+        selection = self.canvas.get_selection()
+        if not selection:
+            QMessageBox.warning(self, "警告", "请先选择要添加文字的区域")
+            return
+
+        bbox = self._selection_to_bbox(selection)
+        if bbox is None:
+            QMessageBox.warning(self, "警告", "选区无效")
+            return
+
+        selection_rect = self._bbox_to_rect(bbox)
+        area_snapshot = self.current_image.crop(selection_rect)
+
+        font_features = self._get_font_features_from_selection(selection)
+        system_fonts = self.text_editor.get_system_fonts()
+
+        dialog = TextInputDialog(
+            font_features,
+            system_fonts,
+            self,
+            title="添加文字",
+            preset_features=self.sampled_font_features,
+            initial_params=self.sampled_font_features
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        new_text = dialog.get_text()
+        if not new_text:
+            QMessageBox.warning(self, "警告", "文字内容不能为空")
+            return
+
+        font_params = dialog.get_font_params()
+
+        self.history_manager.save_state(self.current_image)
+
+        result = self.text_editor.add_text(
+            self.current_image,
+            bbox,
+            new_text,
+            font_params,
+            font_features
+        )
+
+        if result:
+            self.current_image = result
+            self.canvas.set_image(result)
+            self.canvas.clear_selection()
+            stored_features = dict(font_features or {})
+            stored_features['font_color'] = font_params.get('font_color')
+            stored_features['font_size'] = font_params.get('font_size')
+            if font_params.get('font_name'):
+                stored_features['preferred_font'] = font_params.get('font_name')
+            self.last_text_edit = {
+                'bbox': [list(point) for point in bbox],
+                'selection_rect': selection_rect,
+                'snapshot': area_snapshot,
+                'text': new_text,
+                'font_params': dict(font_params),
+                'font_features': stored_features
+            }
+            self.update_ui_state()
+            self.status_bar.showMessage(f"已添加文字: {new_text}")
+
+    def edit_text_in_selection(self):
+        """编辑最近添加的文字"""
+        if self.current_image is None:
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+
+        if not self.last_text_edit:
+            QMessageBox.information(self, "提示", "暂无可编辑的文字，请先添加文字")
+            return
+
+        selection = self.canvas.get_selection()
+        if selection:
+            bbox = self._selection_to_bbox(selection)
+            if bbox is None:
+                QMessageBox.warning(self, "警告", "选区无效")
                 return
-            
-            # 保存当前状态
-            self.history_manager.save_state(self.current_image)
-            
-            # 获取字体参数
-            font_params = dialog.get_font_params()
-            # 获取字体路径
-            font_path, _ = self.text_editor.match_font(font_features, new_text)
-            font_params['font_path'] = font_path
-            
-            # 替换文字
-            result = self.text_editor.replace_text(
-                self.current_image, bbox, new_text, font_params
-            )
-            
-            if result:
-                self.current_image = result
-                self.canvas.set_image(result)
-                self.canvas.clear_selection()
-                # 更新OCR结果（替换后的文字位置可能变化，暂时移除旧结果）
-                # 如果需要继续编辑，可以重新识别
-                self.ocr_results = []
-                self.update_ui_state()
-                self.status_bar.showMessage(f"文字已替换: {old_text} -> {new_text}")
-    
-    def delete_selected_text_from_menu(self):
-        """从菜单栏删除选中文字"""
-        if self.current_image is None:
-            QMessageBox.warning(self, "警告", "请先打开图片")
+            selection_rect = self._bbox_to_rect(bbox)
+        else:
+            bbox = self.last_text_edit['bbox']
+            selection_rect = self.last_text_edit.get('selection_rect')
+
+        if selection_rect is None:
+            QMessageBox.warning(self, "警告", "缺少文字位置，请重新选择区域")
             return
-        
-        # 检查是否有OCR识别结果
-        if not self.ocr_results:
-            QMessageBox.warning(
-                self,
-                "提示",
-                "没有可删除的文字。\n请先使用"文字识别"功能识别图片中的文字。"
-            )
+
+        last_info = self.last_text_edit
+
+        working_image = self.current_image.copy()
+        previous_rect = last_info.get('selection_rect')
+        snapshot = last_info.get('snapshot')
+        if snapshot and previous_rect:
+            working_image.paste(snapshot, (previous_rect[0], previous_rect[1]))
+
+        area_snapshot = working_image.crop(selection_rect)
+
+        base_features = self.text_editor.extract_font_features(working_image, bbox)
+        if not base_features or base_features.get('font_color') is None:
+            base_features = dict(last_info.get('font_features') or {})
+
+        preset_features = self.sampled_font_features or last_info.get('font_features')
+        system_fonts = self.text_editor.get_system_fonts()
+
+        dialog = TextInputDialog(
+            base_features,
+            system_fonts,
+            self,
+            title="编辑文字",
+            default_text=last_info.get('text', ""),
+            preset_features=preset_features,
+            initial_params=last_info.get('font_params')
+        )
+
+        if dialog.exec_() != QDialog.Accepted:
+            self.update_ui_state()
             return
-        
-        # 检查是否有选中的区域
-        selection = self.canvas.get_selection()
+
+        new_text = dialog.get_text()
+        if not new_text:
+            QMessageBox.warning(self, "警告", "文字内容不能为空")
+            return
+
+        font_params = dialog.get_font_params()
+
+        self.history_manager.save_state(self.current_image)
+
+        updated_image = self.text_editor.add_text(
+            working_image,
+            bbox,
+            new_text,
+            font_params,
+            base_features
+        )
+
+        if updated_image:
+            self.current_image = updated_image
+            self.canvas.set_image(updated_image)
+            self.canvas.clear_selection()
+            stored_features = dict(base_features or {})
+            stored_features['font_color'] = font_params.get('font_color')
+            stored_features['font_size'] = font_params.get('font_size')
+            if font_params.get('font_name'):
+                stored_features['preferred_font'] = font_params.get('font_name')
+            self.last_text_edit = {
+                'bbox': [list(point) for point in bbox],
+                'selection_rect': selection_rect,
+                'snapshot': area_snapshot,
+                'text': new_text,
+                'font_params': dict(font_params),
+                'font_features': stored_features
+            }
+            self.update_ui_state()
+            self.status_bar.showMessage("文字样式已更新")
+
+    def _selection_to_bbox(self, selection):
         if not selection:
-            # 如果没有选中区域，显示所有识别结果供选择
-            dialog = TextRecognitionDialog(self.ocr_results, self)
-            result = dialog.exec_()
-            if result == 1:  # 删除
-                self.delete_selected_texts(dialog.get_selected_results())
-            return
-        
-        # 如果有选中区域，查找该区域内的文字
+            return None
+
         x1, y1, x2, y2 = selection
-        selected_texts = []
-        for ocr_result in self.ocr_results:
-            bbox = ocr_result['bbox']
-            # 检查文字是否在选择区域内
-            text_x1 = min(point[0] for point in bbox)
-            text_y1 = min(point[1] for point in bbox)
-            text_x2 = max(point[0] for point in bbox)
-            text_y2 = max(point[1] for point in bbox)
-            
-            # 判断文字是否在选择区域内（至少50%重叠）
-            if (text_x1 >= x1 and text_y1 >= y1 and text_x2 <= x2 and text_y2 <= y2):
-                selected_texts.append(ocr_result)
-        
-        if not selected_texts:
-            QMessageBox.information(self, "提示", "选中区域内没有识别到的文字")
-            return
-        
-        # 删除选中的文字
-        self.delete_selected_texts(selected_texts)
-    
-    def replace_selected_text_from_menu(self):
-        """从菜单栏替换选中文字"""
-        if self.current_image is None:
-            QMessageBox.warning(self, "警告", "请先打开图片")
-            return
-        
-        # 检查是否有OCR识别结果
-        if not self.ocr_results:
-            QMessageBox.warning(
-                self,
-                "提示",
-                "没有可替换的文字。\n请先使用"文字识别"功能识别图片中的文字。"
-            )
-            return
-        
-        # 检查是否有选中的区域
-        selection = self.canvas.get_selection()
-        if not selection:
-            # 如果没有选中区域，显示所有识别结果供选择
-            dialog = TextRecognitionDialog(self.ocr_results, self)
-            result = dialog.exec_()
-            if result == 2:  # 替换
-                selected = dialog.get_selected_results()
-                if selected:
-                    # 只处理第一个选中的文字
-                    self.replace_text(selected[0])
-            return
-        
-        # 如果有选中区域，查找该区域内的文字
-        x1, y1, x2, y2 = selection
-        selected_texts = []
-        for ocr_result in self.ocr_results:
-            bbox = ocr_result['bbox']
-            # 检查文字是否在选择区域内
-            text_x1 = min(point[0] for point in bbox)
-            text_y1 = min(point[1] for point in bbox)
-            text_x2 = max(point[0] for point in bbox)
-            text_y2 = max(point[1] for point in bbox)
-            
-            # 判断文字是否在选择区域内（至少50%重叠）
-            if (text_x1 >= x1 and text_y1 >= y1 and text_x2 <= x2 and text_y2 <= y2):
-                selected_texts.append(ocr_result)
-        
-        if not selected_texts:
-            QMessageBox.information(self, "提示", "选中区域内没有识别到的文字")
-            return
-        
-        # 只处理第一个匹配的文字
-        self.replace_text(selected_texts[0])
+        if x1 == x2 or y1 == y2:
+            return None
+
+        return [
+            [int(x1), int(y1)],
+            [int(x2), int(y1)],
+            [int(x2), int(y2)],
+            [int(x1), int(y2)],
+        ]
+
+    def _bbox_to_rect(self, bbox):
+        if not bbox:
+            return None
+        x_coords = [point[0] for point in bbox]
+        y_coords = [point[1] for point in bbox]
+        return (
+            int(min(x_coords)),
+            int(min(y_coords)),
+            int(max(x_coords)),
+            int(max(y_coords))
+        )
+
+    def _get_font_features_from_selection(self, selection):
+        bbox = self._selection_to_bbox(selection)
+        if bbox is None:
+            return self.text_editor.get_default_font_features()
+
+        features = self.text_editor.extract_font_features(self.current_image, bbox)
+
+        # 提供一个可用于优先显示的字体名称
+        font_path, _ = self.text_editor.match_font(features, "sample")
+        if font_path:
+            font_name = os.path.splitext(os.path.basename(font_path))[0]
+            features['preferred_font'] = font_name
+        return features
 
