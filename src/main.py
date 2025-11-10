@@ -26,7 +26,7 @@ def main():
     
     # 创建主窗口
     window = MainWindow()
-    window.show()
+    window.showMaximized()
     
     # 运行应用程序
     sys.exit(app.exec_())

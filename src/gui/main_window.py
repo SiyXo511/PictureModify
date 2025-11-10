@@ -236,7 +236,6 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         """初始化UI"""
         self.setWindowTitle("图片修改工具")
-        self.setGeometry(100, 100, 1200, 800)
         
         # 应用样式表
         self.apply_stylesheet()
@@ -435,7 +434,7 @@ class MainWindow(QMainWindow):
         vertical_delete_action.triggered.connect(self.vertical_delete_stitch)
         tools_menu.addAction(vertical_delete_action)
         
-        smart_fill_action = QAction("🎨 智能填充(&F)", self)
+        smart_fill_action = QAction("🎨 图像填充(&F)", self)
         smart_fill_action.setStatusTip("使用智能算法填充选中区域")
         smart_fill_action.triggered.connect(self.smart_fill)
         tools_menu.addAction(smart_fill_action)
@@ -514,7 +513,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(vertical_delete_btn)
         
         # 智能填充
-        smart_fill_btn = QAction("🎨 智能填充", self)
+        smart_fill_btn = QAction("🎨 图像填充", self)
         smart_fill_btn.setStatusTip("智能填充选中区域")
         smart_fill_btn.triggered.connect(self.smart_fill)
         toolbar.addAction(smart_fill_btn)
