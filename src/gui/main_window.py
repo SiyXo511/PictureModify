@@ -678,7 +678,7 @@ class MainWindow(QMainWindow):
         image = self.history_manager.undo()
         if image:
             self.current_image = image
-            self.canvas.set_image(image)
+            self.canvas.update_image(image)
             self.update_ui_state()
     
     def redo(self):
@@ -686,7 +686,7 @@ class MainWindow(QMainWindow):
         image = self.history_manager.redo()
         if image:
             self.current_image = image
-            self.canvas.set_image(image)
+            self.canvas.update_image(image)
             self.update_ui_state()
     
     def reset_image(self):
@@ -729,7 +729,7 @@ class MainWindow(QMainWindow):
         result = self.image_processor.vertical_delete_and_stitch(self.current_image, selection)
         if result:
             self.current_image = result
-            self.canvas.set_image(result)
+            self.canvas.update_image(result)
             self.canvas.clear_selection()
             self.update_ui_state()
             self.status_bar.showMessage("垂直删除拼接完成")
@@ -760,7 +760,7 @@ class MainWindow(QMainWindow):
             
             if result:
                 self.current_image = result
-                self.canvas.set_image(result)
+                self.canvas.update_image(result)
                 self.canvas.clear_selection()
                 self.update_ui_state()
                 self.status_bar.showMessage(f"智能填充完成 ({fill_mode})")
@@ -811,7 +811,7 @@ class MainWindow(QMainWindow):
         processed_image = self.text_editor.delete_text(self.current_image, [bbox])
         if processed_image:
             self.current_image = processed_image
-            self.canvas.set_image(processed_image)
+            self.canvas.update_image(processed_image)
             self.canvas.clear_selection()
             self.last_text_edit = None
             self.update_ui_state()
@@ -869,7 +869,7 @@ class MainWindow(QMainWindow):
 
         if result:
             self.current_image = result
-            self.canvas.set_image(result)
+            self.canvas.update_image(result)
             self.canvas.clear_selection()
             stored_features = dict(font_features or {})
             stored_features['font_color'] = font_params.get('font_color')
@@ -962,7 +962,7 @@ class MainWindow(QMainWindow):
 
         if updated_image:
             self.current_image = updated_image
-            self.canvas.set_image(updated_image)
+            self.canvas.update_image(updated_image)
             self.canvas.clear_selection()
             stored_features = dict(base_features or {})
             stored_features['font_color'] = font_params.get('font_color')

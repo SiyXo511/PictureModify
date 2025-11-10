@@ -3,7 +3,7 @@
 """
 from PyQt5.QtWidgets import QWidget, QScrollArea
 from PyQt5.QtCore import Qt, QPoint, QRect, pyqtSignal
-from PyQt5.QtGui import QPainter, QPen, QPixmap, QImage, QColor
+from PyQt5.QtGui import QPainter, QPen, QPixmap, QImage, QColor, QCursor
 from PIL import Image
 import numpy as np
 
@@ -23,17 +23,21 @@ class ImageCanvas(QWidget):
         self.selection_rect = None  # 选择区域 (x1, y1, x2, y2)
         self.is_selecting = False
         self.start_point = None
+        self.is_panning = False  # 是否正在平移
+        self.pan_start_pos = None  # 平移起始位置
+        self.image_offset = QPoint(0, 0)  # 图片偏移
         
         # 设置背景
         self.setStyleSheet("background-color: #2b2b2b;")
         self.setMinimumSize(400, 300)
     
-    def set_image(self, image: Image.Image):
+    def set_image(self, image: Image.Image, reset_view: bool = True):
         """
         设置图片
         
         Args:
             image: PIL.Image对象
+            reset_view: 是否重置视图（缩放和平移）
         """
         if image is None:
             self.image = None
@@ -43,8 +47,16 @@ class ImageCanvas(QWidget):
         
         self.image = image.copy()
         self._update_pixmap()
-        self._fit_to_window()
+        
+        if reset_view:
+            self.image_offset = QPoint(0, 0)
+            self._fit_to_window()
+        
         self.update()
+    
+    def update_image(self, image: Image.Image):
+        """仅更新图片内容，不改变视图"""
+        self.set_image(image, reset_view=False)
     
     def _update_pixmap(self):
         """更新QPixmap"""
@@ -71,6 +83,7 @@ class ImageCanvas(QWidget):
         scale_x = widget_size.width() / pixmap_size.width()
         scale_y = widget_size.height() / pixmap_size.height()
         self.scale_factor = min(scale_x, scale_y, 1.0)  # 不放大，只缩小
+        self.image_offset = QPoint(0, 0)  # 重置偏移
         
         self.update()
     
@@ -85,8 +98,8 @@ class ImageCanvas(QWidget):
         
         # 计算绘制位置（居中）
         scaled_size = self.pixmap.size() * self.scale_factor
-        x = (self.width() - scaled_size.width()) // 2
-        y = (self.height() - scaled_size.height()) // 2
+        x = (self.width() - scaled_size.width()) // 2 + self.image_offset.x()
+        y = (self.height() - scaled_size.height()) // 2 + self.image_offset.y()
         
         # 绘制图片
         painter.drawPixmap(x, y, scaled_size.width(), scaled_size.height(), self.pixmap)
@@ -120,6 +133,10 @@ class ImageCanvas(QWidget):
                 self.start_point = (img_x, img_y)
                 self.selection_rect = None
                 self.update()
+        elif event.button() == Qt.RightButton and self.image is not None:
+            self.is_panning = True
+            self.pan_start_pos = event.pos()
+            self.setCursor(Qt.ClosedHandCursor)
     
     def mouseMoveEvent(self, event):
         """鼠标移动事件"""
@@ -135,6 +152,11 @@ class ImageCanvas(QWidget):
                 )
                 self.update()
                 self.selection_changed.emit(self.selection_rect)
+        elif self.is_panning:
+            delta = event.pos() - self.pan_start_pos
+            self.image_offset += delta
+            self.pan_start_pos = event.pos()
+            self.update()
     
     def mouseReleaseEvent(self, event):
         """鼠标释放事件"""
@@ -142,6 +164,9 @@ class ImageCanvas(QWidget):
             self.is_selecting = False
             if self.selection_rect:
                 self.selection_changed.emit(self.selection_rect)
+        elif event.button() == Qt.RightButton and self.is_panning:
+            self.is_panning = False
+            self.setCursor(Qt.ArrowCursor)
     
     def _canvas_to_image(self, canvas_pos):
         """
@@ -158,8 +183,8 @@ class ImageCanvas(QWidget):
         
         # 计算图片在画布上的位置（居中）
         scaled_size = self.pixmap.size() * self.scale_factor
-        x_offset = (self.width() - scaled_size.width()) // 2
-        y_offset = (self.height() - scaled_size.height()) // 2
+        x_offset = (self.width() - scaled_size.width()) // 2 + self.image_offset.x()
+        y_offset = (self.height() - scaled_size.height()) // 2 + self.image_offset.y()
         
         # 转换坐标
         img_x = (canvas_pos.x() - x_offset) / self.scale_factor
@@ -222,5 +247,6 @@ class ImageCanvas(QWidget):
         """重置缩放"""
         if self.pixmap is not None:
             self.scale_factor = 1.0
+            self.image_offset = QPoint(0, 0)
             self.update()
 
