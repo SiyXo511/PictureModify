@@ -1,6 +1,7 @@
 """
 图片显示画布模块
 """
+from typing import Tuple
 from PyQt5.QtWidgets import QWidget, QScrollArea
 from PyQt5.QtCore import Qt, QPoint, QRect, pyqtSignal
 from PyQt5.QtGui import QPainter, QPen, QPixmap, QImage, QColor, QCursor
@@ -200,6 +201,27 @@ class ImageCanvas(QWidget):
         """获取选择区域"""
         return self.selection_rect
     
+    def set_selection(self, rect: Tuple[int, int, int, int]):
+        """
+        设置选择区域
+        
+        Args:
+            rect: (x1, y1, x2, y2) 形式的矩形，使用图片坐标
+        """
+        if self.image is None:
+            return
+        
+        # 保证坐标顺序正确
+        x1, y1, x2, y2 = rect
+        self.selection_rect = (
+            min(x1, x2),
+            min(y1, y2),
+            max(x1, x2),
+            max(y1, y2)
+        )
+        self.update()
+        self.selection_changed.emit(self.selection_rect)
+
     def clear_selection(self):
         """清除选择"""
         self.selection_rect = None

@@ -6,9 +6,10 @@ import os
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QMenuBar, QToolBar, QStatusBar, QAction, QFileDialog,
                              QMessageBox, QDialog, QLabel, QPushButton, QComboBox,
-                             QSpinBox, QColorDialog, QLineEdit, QDialogButtonBox)
+                             QSpinBox, QColorDialog, QLineEdit, QDialogButtonBox,
+                             QFrame)
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QKeySequence, QColor
+from PyQt5.QtGui import QKeySequence, QColor, QFont
 
 from src.gui.image_canvas import ImageCanvas
 from src.utils.file_handler import FileHandler
@@ -244,13 +245,16 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        layout = QVBoxLayout()
-        central_widget.setLayout(layout)
+        main_layout = QHBoxLayout()
+        central_widget.setLayout(main_layout)
         
         # 创建图片画布
         self.canvas = ImageCanvas()
         self.canvas.selection_changed.connect(self.on_selection_changed)
-        layout.addWidget(self.canvas)
+        main_layout.addWidget(self.canvas, 4)  # 占4/5宽度
+        
+        # 创建信息面板
+        self.create_info_panel(main_layout)
         
         # 创建菜单栏
         self.create_menu_bar()
@@ -261,6 +265,43 @@ class MainWindow(QMainWindow):
         # 创建状态栏
         self.create_status_bar()
     
+    def create_info_panel(self, main_layout):
+        """创建右侧信息面板"""
+        info_panel = QFrame()
+        info_panel.setFrameShape(QFrame.StyledPanel)
+        info_panel.setFixedWidth(250)
+        
+        panel_layout = QVBoxLayout()
+        info_panel.setLayout(panel_layout)
+        
+        # 采样信息标题
+        sample_title = QLabel("采样样式信息")
+        sample_title.setFont(QFont("Arial", 12, QFont.Bold))
+        panel_layout.addWidget(sample_title)
+        
+        # 字体名称
+        panel_layout.addWidget(QLabel("字体:"))
+        self.font_name_label = QLabel("N/A")
+        self.font_name_label.setWordWrap(True)
+        panel_layout.addWidget(self.font_name_label)
+        
+        # 字体大小
+        panel_layout.addWidget(QLabel("大小:"))
+        self.font_size_label = QLabel("N/A")
+        panel_layout.addWidget(self.font_size_label)
+        
+        # 字体颜色
+        panel_layout.addWidget(QLabel("颜色:"))
+        self.font_color_swatch = QLabel()
+        self.font_color_swatch.setMinimumSize(100, 30)
+        self.font_color_swatch.setAutoFillBackground(True)
+        self.font_color_swatch.setStyleSheet("background-color: #2b2b2b; border: 1px solid #3d3d3d;")
+        panel_layout.addWidget(self.font_color_swatch)
+        
+        panel_layout.addStretch()
+        
+        main_layout.addWidget(info_panel, 1) # 占1/5宽度
+
     def apply_stylesheet(self):
         """应用样式表"""
         stylesheet = """
@@ -366,6 +407,11 @@ class MainWindow(QMainWindow):
         QMainWindow {
             background-color: #1e1e1e;
         }
+        
+        QLabel {
+            color: #ffffff;
+            font-size: 13px;
+        }
         """
         self.setStyleSheet(stylesheet)
     
@@ -467,6 +513,12 @@ class MainWindow(QMainWindow):
         self.edit_text_action = edit_text_action
         tools_menu.addAction(edit_text_action)
         
+        replace_text_action = QAction("🔄 替换文字(&T)", self)
+        replace_text_action.setStatusTip("替换选区内的文字")
+        replace_text_action.triggered.connect(self.replace_text_in_selection)
+        self.replace_text_action = replace_text_action
+        tools_menu.addAction(replace_text_action)
+
         # 视图菜单
         view_menu = menubar.addMenu("👁️ 视图(&V)")
         
@@ -541,6 +593,11 @@ class MainWindow(QMainWindow):
         self.edit_text_btn.triggered.connect(self.edit_text_in_selection)
         toolbar.addAction(self.edit_text_btn)
 
+        self.replace_text_btn = QAction("🔄 替换文字", self)
+        self.replace_text_btn.setStatusTip("替换选区内的文字")
+        self.replace_text_btn.triggered.connect(self.replace_text_in_selection)
+        toolbar.addAction(self.replace_text_btn)
+
         toolbar.addSeparator()
         
         # 撤销
@@ -581,6 +638,7 @@ class MainWindow(QMainWindow):
         can_sample = has_image and has_selection
         can_modify = has_image and has_selection
         can_edit_text = has_image and self.last_text_edit is not None
+        can_replace = has_image and has_selection
 
         if hasattr(self, 'sample_text_action'):
             self.sample_text_action.setEnabled(can_sample)
@@ -590,6 +648,8 @@ class MainWindow(QMainWindow):
             self.add_text_action.setEnabled(can_modify)
         if hasattr(self, 'edit_text_action'):
             self.edit_text_action.setEnabled(can_edit_text)
+        if hasattr(self, 'replace_text_action'):
+            self.replace_text_action.setEnabled(can_replace)
 
         if hasattr(self, 'sample_text_btn'):
             self.sample_text_btn.setEnabled(can_sample)
@@ -599,6 +659,8 @@ class MainWindow(QMainWindow):
             self.add_text_btn.setEnabled(can_modify)
         if hasattr(self, 'edit_text_btn'):
             self.edit_text_btn.setEnabled(can_edit_text)
+        if hasattr(self, 'replace_text_btn'):
+            self.replace_text_btn.setEnabled(can_replace)
         
         # 更新状态栏
         if has_image:
@@ -787,8 +849,31 @@ class MainWindow(QMainWindow):
             features['preferred_font'] = font_name
 
         self.sampled_font_features = features
-        self.status_bar.showMessage("已采样选区文字样式，可在添加文字时应用")
+        if features:
+            self.update_info_panel(features)
+            self.status_bar.showMessage("已采样选区文字样式，可在添加文字时应用")
+        else:
+            self.status_bar.showMessage("未能从选区提取有效的文字样式")
 
+    def update_info_panel(self, features):
+        """更新信息面板"""
+        if not features:
+            font_name = "N/A"
+            font_size = "N/A"
+            color_str = "background-color: #2b2b2b; border: 1px solid #3d3d3d;"
+        else:
+            font_name = features.get('preferred_font') or features.get('font_name') or "未知"
+            font_size = str(int(features.get('font_size', 0)))
+            color = features.get('font_color')
+            if color:
+                color_str = f"background-color: rgb({color[0]}, {color[1]}, {color[2]});"
+            else:
+                color_str = "background-color: #2b2b2b; border: 1px solid #3d3d3d;"
+
+        self.font_name_label.setText(font_name)
+        self.font_size_label.setText(font_size)
+        self.font_color_swatch.setStyleSheet(color_str)
+        
     def delete_text_in_selection(self):
         """删除选区内的文字"""
         if self.current_image is None:
@@ -869,7 +954,8 @@ class MainWindow(QMainWindow):
         if result:
             self.current_image = result
             self.canvas.update_image(result)
-            self.canvas.clear_selection()
+            selection_rect = self._bbox_to_rect(bbox)
+            self.canvas.set_selection(selection_rect)
             stored_features = dict(font_features or {})
             stored_features['font_color'] = font_params.get('font_color')
             stored_features['font_size'] = font_params.get('font_size')
@@ -962,7 +1048,8 @@ class MainWindow(QMainWindow):
         if updated_image:
             self.current_image = updated_image
             self.canvas.update_image(updated_image)
-            self.canvas.clear_selection()
+            selection_rect = self._bbox_to_rect(bbox)
+            self.canvas.set_selection(selection_rect)
             stored_features = dict(base_features or {})
             stored_features['font_color'] = font_params.get('font_color')
             stored_features['font_size'] = font_params.get('font_size')
@@ -978,6 +1065,67 @@ class MainWindow(QMainWindow):
             }
             self.update_ui_state()
             self.status_bar.showMessage("文字样式已更新")
+
+    def replace_text_in_selection(self):
+        """替换选区内的文字"""
+        if self.current_image is None:
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+
+        selection = self.canvas.get_selection()
+        if not selection:
+            QMessageBox.warning(self, "警告", "请先选择要替换文字的区域")
+            return
+
+        bbox = self._selection_to_bbox(selection)
+        if bbox is None:
+            QMessageBox.warning(self, "警告", "选区无效")
+            return
+
+        font_features = self._get_font_features_from_selection(selection)
+        system_fonts = self.text_editor.get_system_fonts()
+
+        dialog = TextInputDialog(
+            font_features,
+            system_fonts,
+            self,
+            title="替换文字",
+            preset_features=self.sampled_font_features,
+            initial_params=self.sampled_font_features
+        )
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        new_text = dialog.get_text()
+        if not new_text:
+            QMessageBox.warning(self, "警告", "替换文字内容不能为空")
+            return
+        
+        font_params = dialog.get_font_params()
+
+        self.history_manager.save_state(self.current_image)
+        
+        # 调用核心替换函数
+        result = self.text_editor.replace_text(
+            self.current_image,
+            bbox,
+            new_text,
+            font_params
+        )
+
+        if result:
+            self.current_image = result
+            self.canvas.update_image(result)
+            
+            # 更新选区以匹配替换后的文字
+            selection_rect = self._bbox_to_rect(bbox)
+            self.canvas.set_selection(selection_rect)
+            
+            # 清除last_text_edit，因为这不是简单的添加或编辑
+            self.last_text_edit = None
+            
+            self.update_ui_state()
+            self.status_bar.showMessage(f"已替换文字: {new_text}")
 
     def _selection_to_bbox(self, selection):
         if not selection:
